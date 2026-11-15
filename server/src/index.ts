@@ -5,12 +5,21 @@ import { startServer } from './app.ts'
 const root = path.resolve(import.meta.dirname, '..', '..')
 const webDist = path.join(root, 'web', 'dist')
 
+const port = Number(process.env.PORT ?? 4000)
+
 const server = await startServer({
-  port: Number(process.env.PORT ?? 4000),
+  port,
   host: process.env.HOST ?? '127.0.0.1',
   dataDir: process.env.DATA_DIR ?? path.join(root, 'data'),
   // Serve the built web app if there is one; in development Vite serves it.
   staticDir: existsSync(webDist) ? webDist : undefined,
+}).catch((err: NodeJS.ErrnoException) => {
+  if (err.code !== 'EADDRINUSE') throw err
+  console.error(
+    `Port ${port} is already in use. Another copy of collab-tex is probably running; ` +
+      'stop it first, or set PORT to a different number.',
+  )
+  process.exit(1)
 })
 
 console.log(`collab-tex server listening on http://localhost:${server.port}`)

@@ -1,10 +1,17 @@
-import type { EditorView } from 'codemirror'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { MAIN_FILE } from '../../shared/project.ts'
 import { type CompileStatus, useCompileStatus } from './compileStatus'
-import { Editor, jumpToLine } from './Editor'
+import { Editor, type Jump } from './Editor'
+import { Files } from './Files'
 import { loadIdentity, saveIdentity } from './identity'
 import { Preview } from './Preview'
-import { type ConnectionState, openSession, type Peer, type Session } from './session'
+import {
+  type ConnectionState,
+  openSession,
+  type Peer,
+  type ProjectFile,
+  type Session,
+} from './session'
 
 function useSession(docId: string): Session | null {
   const [session, setSession] = useState<Session | null>(null)
@@ -23,6 +30,10 @@ function useConnection(session: Session | null): ConnectionState {
   const [state, setState] = useState<ConnectionState>('connecting')
   useEffect(() => {
     if (!session) return
+    // Read the current state as well as listening for changes: the socket may
+    // already have connected before this effect ran (it does when the page is
+    // slow to render, e.g. in a background tab), and that event is then gone.
+    setState(session.provider.wsconnected ? 'connected' : 'connecting')
     const onStatus = (event: { status: ConnectionState }) => setState(event.status)
     session.provider.on('status', onStatus)
     return () => session.provider.off('status', onStatus)
@@ -40,6 +51,17 @@ function usePeers(session: Session | null): Peer[] {
     return () => session.provider.awareness.off('change', update)
   }, [session])
   return peers
+}
+
+function useFiles(session: Session | null): ProjectFile[] {
+  const [files, setFiles] = useState<ProjectFile[]>([])
+  useEffect(() => {
+    if (!session) return
+    const update = () => setFiles(session.listFiles())
+    update()
+    return session.onFilesChange(update)
+  }, [session])
+  return files
 }
 
 const CONNECTION_LABEL: Record<ConnectionState, string> = {
@@ -68,8 +90,10 @@ export function App({ docId }: { docId: string }) {
   const session = useSession(docId)
   const connection = useConnection(session)
   const peers = usePeers(session)
+  const files = useFiles(session)
   const compile = useCompileStatus(docId, connection === 'connected')
-  const editorRef = useRef<EditorView | null>(null)
+  const [activePath, setActivePath] = useState(MAIN_FILE)
+  const [jump, setJump] = useState<Jump | null>(null)
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
@@ -77,13 +101,22 @@ export function App({ docId }: { docId: string }) {
     saveIdentity(identity)
   }, [session, identity])
 
-  const onView = useCallback((view: EditorView | null) => {
-    editorRef.current = view
-  }, [])
+  // If someone deletes the file you have open, fall back to main.tex.
+  useEffect(() => {
+    if (files.length > 0 && !files.some((file) => file.path === activePath)) {
+      setActivePath(MAIN_FILE)
+    }
+  }, [files, activePath])
 
-  const onJumpToLine = useCallback((line: number) => {
-    if (editorRef.current) jumpToLine(editorRef.current, line)
-  }, [])
+  const onJump = useCallback(
+    (file: string, line: number) => {
+      // Errors in files outside the project (a package, say) open main.tex.
+      const path = session?.getText(file) ? file : MAIN_FILE
+      setActivePath(path)
+      setJump({ path, line: path === file ? line : 1, id: Date.now() })
+    },
+    [session],
+  )
 
   async function copyLink() {
     try {
@@ -94,6 +127,9 @@ export function App({ docId }: { docId: string }) {
       window.prompt('Copy this link to share the document:', location.href)
     }
   }
+
+  // `files` is in scope so this re-reads when a file is created or replaced.
+  const activeText = files.length > 0 ? (session?.getText(activePath) ?? null) : null
 
   return (
     <div className="app">
@@ -141,11 +177,20 @@ export function App({ docId }: { docId: string }) {
       </header>
 
       <main className="panes">
-        <section className="pane" aria-label="Source">
-          {session && <Editor session={session} onView={onView} />}
+        <section className="pane pane-files">
+          {session && (
+            <Files session={session} files={files} activePath={activePath} onOpen={setActivePath} />
+          )}
+        </section>
+        <section className="pane" aria-label={`Source of ${activePath}`}>
+          {session && activeText ? (
+            <Editor session={session} path={activePath} text={activeText} jump={jump} />
+          ) : (
+            <p className="pane-empty">Loading…</p>
+          )}
         </section>
         <section className="pane pane-preview" aria-label="Preview">
-          <Preview docId={docId} compile={compile} onJumpToLine={onJumpToLine} />
+          <Preview docId={docId} compile={compile} onJump={onJump} />
         </section>
       </main>
     </div>

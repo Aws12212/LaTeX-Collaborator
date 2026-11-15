@@ -1,5 +1,8 @@
+import { mkdir, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import WebSocket from 'ws'
+import * as Y from 'yjs'
 import { type RunningServer, startServer } from '../src/app.ts'
 import { STARTER_DOCUMENT } from '../src/template.ts'
 import { connect, synced, tempDir, type TestClient, waitFor } from './helpers.ts'
@@ -106,6 +109,38 @@ describe('real-time sync', () => {
     const carol = open('durable')
     await synced(carol)
     expect(carol.text.toString()).toBe(expected)
+  })
+
+  it('syncs files created and deleted by collaborators', async () => {
+    const alice = open('files')
+    const bob = open('files')
+    await Promise.all([synced(alice), synced(bob)])
+
+    alice.files.set('sections/intro.tex', new Y.Text('hello'))
+    await waitFor(() => bob.files.has('sections/intro.tex'), 'new file at bob')
+
+    bob.files.get('sections/intro.tex')!.insert(5, ' world')
+    await waitFor(
+      () => alice.files.get('sections/intro.tex')!.toString() === 'hello world',
+      "bob's edit to the new file at alice",
+    )
+
+    bob.files.delete('sections/intro.tex')
+    await waitFor(() => !alice.files.has('sections/intro.tex'), 'deletion at alice')
+  })
+
+  it('opens documents saved by the single-file version', async () => {
+    // That version kept the text in one top-level Y.Text called "main".
+    const legacy = new Y.Doc()
+    legacy.getText('main').insert(0, '% written before multi-file projects\n')
+    await mkdir(path.join(data.dir, 'docs'), { recursive: true })
+    await writeFile(path.join(data.dir, 'docs', 'old.ydoc'), Y.encodeStateAsUpdate(legacy))
+
+    const alice = open('old')
+    await synced(alice)
+
+    expect(alice.text.toString()).toBe('% written before multi-file projects\n')
+    expect([...alice.files.keys()]).toEqual(['main.tex'])
   })
 
   it('shares presence and removes it when someone leaves', async () => {

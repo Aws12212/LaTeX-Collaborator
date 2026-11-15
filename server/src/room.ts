@@ -12,13 +12,23 @@ import type { RawData, WebSocket } from 'ws'
 import * as awarenessProtocol from 'y-protocols/awareness'
 import * as syncProtocol from 'y-protocols/sync'
 import * as Y from 'yjs'
+import {
+  ASSETS_KEY,
+  type AssetInfo,
+  fileKind,
+  FILES_KEY,
+  isValidPath,
+  MAIN_FILE,
+  MAX_FILES,
+  MAX_TEXT_BYTES,
+} from '../../shared/project.ts'
 
 const MESSAGE_SYNC = 0
 const MESSAGE_AWARENESS = 1
 const MESSAGE_QUERY_AWARENESS = 3
 
-/** Name of the shared text inside the Y.Doc. The web client must use the same key. */
-export const TEXT_KEY = 'main'
+/** Where the single-file version of the app kept a document's text. */
+const LEGACY_TEXT_KEY = 'main'
 
 interface AwarenessChange {
   added: number[]
@@ -83,8 +93,52 @@ export class Room {
     return this.conns.size
   }
 
-  get text(): string {
-    return this.doc.getText(TEXT_KEY).toString()
+  /**
+   * The project's text files as plain strings, for compiling.
+   *
+   * The map's keys are written by browsers, so they are untrusted: anything
+   * that is not a valid project path is ignored here and never reaches disk.
+   */
+  textFiles(): Map<string, string> {
+    const files = new Map<string, string>()
+    const seen = new Set<string>()
+    this.doc.getMap<unknown>(FILES_KEY).forEach((value, path) => {
+      if (files.size >= MAX_FILES || !(value instanceof Y.Text)) return
+      if (!isValidPath(path) || fileKind(path) !== 'text') return
+      // Two names differing only by case would be one file on Windows/macOS.
+      if (seen.has(path.toLowerCase())) return
+      if (value.length > MAX_TEXT_BYTES) return
+      seen.add(path.toLowerCase())
+      files.set(path, value.toString())
+    })
+    return files
+  }
+
+  /** Creates or replaces a text file. */
+  setTextFile(path: string, content: string): void {
+    this.doc.getMap<Y.Text>(FILES_KEY).set(path, new Y.Text(content))
+  }
+
+  /** Records an uploaded figure so every client's file list shows it. */
+  setAsset(path: string, info: AssetInfo): void {
+    this.doc.getMap<AssetInfo>(ASSETS_KEY).set(path, info)
+  }
+
+  deleteAsset(path: string): void {
+    this.doc.getMap<AssetInfo>(ASSETS_KEY).delete(path)
+  }
+
+  /**
+   * Documents saved by the single-file version kept their text in one
+   * top-level Y.Text. Move it to main.tex so it opens in the multi-file app.
+   */
+  migrateLegacyText(): void {
+    const legacy = this.doc.getText(LEGACY_TEXT_KEY)
+    if (legacy.length === 0 || this.doc.getMap(FILES_KEY).has(MAIN_FILE)) return
+    this.doc.transact(() => {
+      this.setTextFile(MAIN_FILE, legacy.toString())
+      legacy.delete(0, legacy.length)
+    })
   }
 
   /** Full document state, suitable for persisting and for `new Room(id, state)`. */

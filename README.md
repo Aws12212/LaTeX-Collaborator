@@ -35,6 +35,15 @@ browser ── GET /api/docs/:doc/pdf ──────▶ latest PDF (kept in 
   CRDT (Yjs). Edits are exchanged as small updates and merge without conflicts,
   including edits made offline. `server/src/room.ts` implements the sync and
   presence protocol directly on top of `ws`.
+- **Projects.** A document is a project: `main.tex` plus any number of other
+  text files (`.tex`, `.sty`, `.bib`, ...) in folders, each one a shared text
+  inside the CRDT, and uploaded figures (PDF, PNG, JPEG), which are stored on
+  disk by `server/src/assets.ts` and only listed in the CRDT. Add them with
+  "Add files" or "Add folder" in the file list.
+- **Untrusted file names.** File names come from browsers and become paths on
+  the server, so `shared/project.ts` defines one strict rule for what a path
+  may be (no `..`, absolute paths, hidden files or unknown types). It is
+  checked at every point a name reaches the disk.
 - **Persistence.** `server/src/store.ts` writes each document's state to
   `data/docs/` shortly after it changes, atomically (temp file, then rename).
   Rooms are loaded on demand and evicted when the last person leaves.
@@ -52,7 +61,7 @@ browser ── GET /api/docs/:doc/pdf ──────▶ latest PDF (kept in 
 - **Sandboxing.** TeX can still read any file the server user can read.
   Compiles must run in a container before this is exposed to the internet.
 - **Accounts and permissions.** Anyone with a document's link can edit it.
-- **Multi-file projects.** A document is a single `.tex` file; no images or
-  `\input` files yet.
+- **File management.** Files can be added and deleted but not renamed or
+  moved, and figures cannot be previewed on their own.
 - **Deployment.** `npm start` builds the web app and serves it from the API
   server, but nothing is hosted yet.

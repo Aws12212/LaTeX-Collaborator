@@ -4,12 +4,22 @@ import path from 'node:path'
 import WebSocket from 'ws'
 import { WebsocketProvider } from 'y-websocket'
 import * as Y from 'yjs'
+import { ASSETS_KEY, type AssetInfo, FILES_KEY, MAIN_FILE } from '../../shared/project.ts'
+import type { ProjectSnapshot } from '../src/latex.ts'
 
 export interface TestClient {
   doc: Y.Doc
-  text: Y.Text
+  /** The shared text of main.tex. Only available once the client has synced. */
+  readonly text: Y.Text
+  files: Y.Map<Y.Text>
+  assets: Y.Map<AssetInfo>
   provider: WebsocketProvider
   close(): void
+}
+
+/** A project with the given main.tex and nothing else. */
+export function projectOf(main: string, extra: Record<string, string> = {}): ProjectSnapshot {
+  return { texts: new Map([[MAIN_FILE, main], ...Object.entries(extra)]), assets: [] }
 }
 
 /** A real client, speaking the same protocol the browser does. */
@@ -19,9 +29,16 @@ export function connect(port: number, docId: string): TestClient {
     WebSocketPolyfill: WebSocket as unknown as typeof globalThis.WebSocket,
     disableBc: true,
   })
+  const files = doc.getMap<Y.Text>(FILES_KEY)
   return {
     doc,
-    text: doc.getText('main'),
+    get text() {
+      const text = files.get(MAIN_FILE)
+      if (!text) throw new Error('main.tex is not there yet; wait for the client to sync')
+      return text
+    },
+    files,
+    assets: doc.getMap<AssetInfo>(ASSETS_KEY),
     provider,
     close() {
       provider.destroy()

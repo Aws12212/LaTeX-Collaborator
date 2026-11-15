@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 export interface LatexError {
+  file: string | null
   line: number | null
   message: string
 }

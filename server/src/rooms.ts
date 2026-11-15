@@ -1,7 +1,8 @@
 // Loads rooms on demand, saves them shortly after each change, and evicts
 // them from memory once the last collaborator leaves.
 import type { WebSocket } from 'ws'
-import { Room, TEXT_KEY } from './room.ts'
+import { MAIN_FILE } from '../../shared/project.ts'
+import { Room } from './room.ts'
 import type { DocStore } from './store.ts'
 import { STARTER_DOCUMENT } from './template.ts'
 
@@ -64,6 +65,23 @@ export class RoomManager {
     return room
   }
 
+  /**
+   * Runs `use` with the room for `id`, loading it if needed. For work that is
+   * not tied to a socket (uploads, compiles): the room is released again
+   * afterwards if nobody is connected.
+   */
+  async withRoom<T>(id: string, use: (room: Room) => T | Promise<T>): Promise<T> {
+    for (;;) {
+      const room = await this.get(id)
+      if (room.closed) continue
+      try {
+        return await use(room)
+      } finally {
+        if (room.size === 0) void this.evict(room)
+      }
+    }
+  }
+
   isLoaded(id: string): boolean {
     return this.rooms.has(id)
   }
@@ -91,7 +109,8 @@ export class RoomManager {
     // Seed brand-new documents on the server, exactly once. If clients seeded
     // them instead, two people opening a new link together would each insert
     // the template and the merged document would contain it twice.
-    if (!saved) room.doc.getText(TEXT_KEY).insert(0, STARTER_DOCUMENT)
+    if (saved) room.migrateLegacyText()
+    else room.setTextFile(MAIN_FILE, STARTER_DOCUMENT)
 
     room.onChange(() => {
       this.scheduleSave(room)

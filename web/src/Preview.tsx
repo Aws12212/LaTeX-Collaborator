@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
+import { MAIN_FILE } from '../../shared/project.ts'
 import type { CompileInfo } from './compileStatus'
 import { PdfView } from './pdfView'
 
 interface PreviewProps {
   docId: string
   compile: CompileInfo
-  onJumpToLine: (line: number) => void
+  onJump: (file: string, line: number) => void
 }
 
-export function Preview({ docId, compile, onJumpToLine }: PreviewProps) {
+export function Preview({ docId, compile, onJump }: PreviewProps) {
   const pagesRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<PdfView | null>(null)
   const [showLog, setShowLog] = useState(false)
@@ -81,8 +82,13 @@ export function Preview({ docId, compile, onJumpToLine }: PreviewProps) {
             {status.errors.map((error, index) => (
               <li key={index}>
                 {error.line !== null ? (
-                  <button className="link" onClick={() => onJumpToLine(error.line!)}>
-                    Line {error.line}
+                  <button
+                    className="link"
+                    onClick={() => onJump(error.file ?? MAIN_FILE, error.line!)}
+                  >
+                    {error.file && error.file !== MAIN_FILE
+                      ? `${error.file}:${error.line}`
+                      : `Line ${error.line}`}
                   </button>
                 ) : (
                   <span className="muted">General</span>
